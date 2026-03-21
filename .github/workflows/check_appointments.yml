@@ -2,8 +2,7 @@ name: Consulate Appointment Checker
 
 on:
   schedule:
-    # This runs at minute 0 of every hour (UTC time)
-    - cron: '0 * * * *'
+    - cron: '*/30 * * * *'
   workflow_dispatch: # This allows you to run it manually to test it
 
 jobs:
