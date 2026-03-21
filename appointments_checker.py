@@ -76,6 +76,12 @@ def check_appointments():
 
         if negative_phrase in page_source:
             print("Result: Still no appointments.")
+            no_cita_msg = (
+                "✅ *Bot Check:* System is online.\n"
+                "Checked at: " + time.strftime('%I:%M %p PST') + "\n"
+                "Status: No appointments found yet. (No hay horas)"
+            )
+            send_telegram_notification(no_cita_msg)
         else:
             print("🚨 SUCCESS: Page content changed!")
             alert_msg = (
