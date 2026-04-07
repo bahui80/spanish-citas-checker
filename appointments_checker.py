@@ -43,7 +43,7 @@ def send_telegram_photo(caption):
         print(f"Photo Error: {e}")
 
 def check_appointments():
-    # Jitter to avoid being flagged as a bot
+    # Jitter to look human
     time.sleep(random.randint(20, 60))
 
     chrome_options = Options()
@@ -60,7 +60,7 @@ def check_appointments():
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
-    # Mask Selenium webdriver flag
+    # Mask Selenium
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
@@ -72,7 +72,6 @@ def check_appointments():
         try:
             WebDriverWait(driver, 8).until(EC.alert_is_present())
             alert = driver.switch_to.alert
-            print(f"Alert cleared: {alert.text}")
             alert.accept()
             time.sleep(2)
         except:
@@ -88,7 +87,6 @@ def check_appointments():
         cita_link = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "CITA PREVIA")))
         cita_link.click()
 
-        # Switch to widget tab
         time.sleep(4)
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
@@ -105,11 +103,10 @@ def check_appointments():
 
         # STEP 5: ANALYZE FINAL PAGE
         print("Step 5: Analyzing results...")
-        time.sleep(15) # Essential for Bookitit to load the "No available" text
-        handle_alert() # Catch any final error alerts
+        time.sleep(15)
+        handle_alert()
 
         page_text = driver.page_source
-        # Specific phrases from your screenshot
         negative_phrases = [
             "No hay horas disponibles",
             "Inténtelo de nuevo dentro de unos días",
@@ -119,24 +116,29 @@ def check_appointments():
         found_negative = any(phrase in page_text for phrase in negative_phrases)
 
         if found_negative:
-            # Result: Still empty. We print this to the GitHub log.
+            # HEARTBEAT MESSAGE (No appointments)
             print(f"Result: No appointments available at {timestamp}.")
+            heartbeat_msg = (
+                f"✅ *Bot Check: Online*\n"
+                f"**Time:** {timestamp}\n"
+                f"**Status:** No hay horas disponibles. (Still checking...)"
+            )
+            send_telegram_msg(heartbeat_msg)
         else:
-            # CHANGE DETECTED: Take a photo and send the alert!
+            # SUCCESS ALERT (Change detected)
             print("🚨 CHANGE DETECTED! Sending alert...")
             driver.save_screenshot("screenshot.png")
             alert_msg = (
                 f"🚨 *¡CITA DISPONIBLE!* 🚨\n\n"
                 f"**Time:** {timestamp}\n"
-                f"The 'No hay horas' message is NO LONGER visible. Check the screenshot and book now!\n\n"
+                f"The 'No hay horas' message is NO LONGER visible. Check immediately!\n\n"
                 f"[Booking Link](https://www.citaconsular.es/es/hosteds/widgetdefault/2d7c60f44f450863fb149b64fdd4b74a1/#services)"
             )
             send_telegram_photo(alert_msg)
 
     except Exception as e:
-        # Error handling with screenshot for debugging
         driver.save_screenshot("screenshot.png")
-        error_msg = f"⚠️ *Bot Error* at {timestamp}\nDetails: `Page Timeout or Structure Change`"
+        error_msg = f"⚠️ *Bot Error* at {timestamp}\nStatus: `Check logs or screenshot`"
         send_telegram_photo(error_msg)
         print(f"Detailed Error: {e}")
     finally:
