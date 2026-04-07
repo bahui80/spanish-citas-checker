@@ -1,99 +1,98 @@
 import os
 import time
 import requests
+import random
+from datetime import datetime, timedelta
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, UnexpectedAlertPresentException
 from webdriver_manager.chrome import ChromeDriverManager
 
-def send_telegram_notification(message):
+# Force Timezone for PST
+os.environ['TZ'] = 'America/Los_Angeles'
+if hasattr(time, 'tzset'):
+    time.tzset()
+
+def send_telegram_msg(message):
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-
-    if not token or not chat_id:
-        print("Error: Telegram credentials missing.")
-        return
-
+    if not token or not chat_id: return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
+    requests.post(url, json=payload)
 
+def send_telegram_photo(caption):
+    token = os.environ.get('TELEGRAM_TOKEN')
+    chat_id = os.environ.get('TELEGRAM_CHAT_ID')
+    if not token or not chat_id: return
+
+    url = f"https://api.telegram.org/bot{token}/sendPhoto"
     try:
-        requests.post(url, json=payload)
+        with open("screenshot.png", "rb") as photo:
+            files = {"photo": photo}
+            data = {"chat_id": chat_id, "caption": caption, "parse_mode": "Markdown"}
+            requests.post(url, files=files, data=data)
     except Exception as e:
-        print(f"Error sending Telegram: {e}")
+        print(f"Failed to send photo: {e}")
 
 def check_appointments():
+    # Anti-detection Jitter: Wait 10-60 seconds
+    wait_jitter = random.randint(10, 60)
+    print(f"Waiting {wait_jitter}s to look human...")
+    time.sleep(wait_jitter)
+
     chrome_options = Options()
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    # Long timeout because government servers can be slow
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 30)
+
+    timestamp = datetime.now().strftime('%I:%M %p PST')
 
     try:
-        print("🔗 Step 1: Opening Consulate website...")
-        driver.get("https://www.exteriores.gob.es/Consulados/sanfrancisco/es/Comunicacion/Noticias/Paginas/Articulos/Ley-de-la-memoria-democr%C3%A1tica.aspx")
+        print("🔗 Loading Widget...")
+        driver.get("https://www.citaconsular.es/es/hosteds/widgetdefault/2d7c60f44f450863fb149b64fdd4b74a1/#services")
+        time.sleep(5) # Allow JS to initialize
 
-        print("Step 2: Clicking 'CITA PREVIA'...")
-        cita_link = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "CITA PREVIA")))
-        cita_link.click()
+        # Save a screenshot of the initial load
+        driver.save_screenshot("screenshot.png")
 
-        # --- HANDLE BROWSER ALERT ---
-        print("Step 3: Waiting for 'Welcome' browser alert...")
+        # Step 1: Look for any "Aceptar" or "Continuar" buttons
         try:
-            wait.until(EC.alert_is_present())
-            alert = driver.switch_to.alert
-            print(f"Alert found with text: {alert.text}")
-            alert.accept()
-            print("Alert accepted.")
-        except TimeoutException:
-            print("No browser alert appeared within timeout.")
+            btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Ok') or contains(., 'Aceptar') or contains(., 'Continuar')]")))
+            btn.click()
+            print("Initial button clicked.")
+            time.sleep(2)
+        except:
+            print("No initial popup found.")
 
-        # --- CLICK CONTINUAR ---
-        print("Step 4: Clicking 'Continuar'...")
-        # Sometimes the button is inside a frame or takes a moment to be 'interactable'
-        time.sleep(2)
-        continuar_button = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Continuar')]")))
-        continuar_button.click()
+        # Step 2: Final Check
+        page_text = driver.page_source
+        negative_phrases = ["No hay horas disponibles", "No hay citas", "No hay fechas"]
 
-        # --- CHECK FINAL PAGE ---
-        print("Step 5: Checking for availability...")
-        time.sleep(5) # Final wait for the calendar/text to load
+        found_negative = any(phrase in page_text for phrase in negative_phrases)
 
-        page_source = driver.page_source
-        negative_phrase = "No hay horas disponibles"
-
-        if negative_phrase in page_source:
-            print("Result: Still no appointments.")
-            no_cita_msg = (
-                "✅ *Bot Check:* System is online.\n"
-                "Checked at: " + time.strftime('%I:%M %p PST') + "\n"
-                "Status: No appointments found yet. (No hay horas)"
-            )
-            send_telegram_notification(no_cita_msg)
+        if found_negative:
+            print(f"Result: No appointments at {timestamp}")
+            # Optional: Heartbeat (Uncomment to get a message every run)
+            # send_telegram_msg(f"✅ *System Online*\nTime: {timestamp}\nStatus: No appointments.")
         else:
-            print("🚨 SUCCESS: Page content changed!")
-            alert_msg = (
-                "🚨 *¡CITA DISPONIBLE!* 🚨\n\n"
-                "The 'No hay horas' message is NOT on the page. Check now!\n\n"
-                "[Open Consulate Site](https://www.exteriores.gob.es/Consulados/sanfrancisco/es/Comunicacion/Noticias/Paginas/Articulos/Ley-de-la-memoria-democr%C3%A1tica.aspx)"
-            )
-            send_telegram_notification(alert_msg)
+            # If the negative phrase is NOT found, send a screenshot immediately!
+            driver.save_screenshot("screenshot.png")
+            alert_msg = f"🚨 *POSSIBLE SLOT DETECTED!* 🚨\nTime: {timestamp}\nThe usual 'No slots' message was not found. Look at the attached image!"
+            send_telegram_photo(alert_msg)
 
     except Exception as e:
-        print(f"❌ Error during execution: {e}")
-        send_telegram_notification(f"⚠️ Bot Error: {e}")
+        driver.save_screenshot("screenshot.png")
+        error_msg = f"⚠️ *Bot Error* at {timestamp}\nDetails: `{str(e)[:100]}...`"
+        send_telegram_photo(error_msg)
     finally:
         driver.quit()
 
