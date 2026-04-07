@@ -43,30 +43,43 @@ def send_telegram_photo(caption):
         print(f"Failed to send photo: {e}")
 
 def check_appointments():
-    # Wait a random time to avoid simultaneous hits with other bots
-    time.sleep(random.randint(10, 30))
+    # Wait a random time
+    time.sleep(random.randint(5, 15))
 
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new") # Using 'new' headless mode for better compatibility
+    chrome_options.add_argument("--headless=new")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-    # Stealth User Agent
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36")
+
+    # STEALTH SETTINGS
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    chrome_options.add_experimental_option('useAutomationExtension', False)
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-    wait = WebDriverWait(driver, 40) # Increased to 40 seconds for slow spinners
+
+    # Execute CDP command to hide selenium
+    driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
+        "source": """
+            Object.defineProperty(navigator, 'webdriver', {
+                get: () => undefined
+            })
+        """
+    })
+
+    wait = WebDriverWait(driver, 60) # Increased to 60s for slow government servers
     timestamp = datetime.now().strftime('%I:%M %p %Z')
 
     def clear_alerts():
         try:
             while True:
-                WebDriverWait(driver, 3).until(EC.alert_is_present())
+                WebDriverWait(driver, 5).until(EC.alert_is_present())
                 alert = driver.switch_to.alert
                 print(f"Dismissed alert: {alert.text}")
                 alert.accept()
-                time.sleep(1)
+                time.sleep(2)
         except:
             pass
 
@@ -74,22 +87,16 @@ def check_appointments():
         print("🔗 Step 1: Opening Widget...")
         driver.get("https://www.citaconsular.es/es/hosteds/widgetdefault/2d7c60f44f450863fb149b64fdd4b74a1/#services")
 
-        # Give extra time for the spinner to go away
-        time.sleep(10)
+        # Long initial sleep to let the heavy widget load
+        time.sleep(15)
         clear_alerts()
-
-        # Check if page is blank/stuck (like your screenshot)
-        if len(driver.find_elements(By.TAG_NAME, "button")) == 0:
-            print("Page looks blank. Attempting one refresh...")
-            driver.refresh()
-            time.sleep(10)
-            clear_alerts()
 
         # Step 2: Handle entry button
         print("Step 2: Looking for entry button...")
+        # If the spinner is still there, this will wait up to 60s
         entry_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Ok') or contains(., 'Aceptar') or contains(., 'Continuar')]")))
         driver.execute_script("arguments[0].click();", entry_btn)
-        time.sleep(3)
+        time.sleep(5)
 
         clear_alerts()
 
@@ -99,7 +106,6 @@ def check_appointments():
         continuar_button = wait.until(EC.element_to_be_clickable((By.XPATH, continue_xpath)))
         driver.execute_script("arguments[0].click();", continuar_button)
 
-        # Wait for actual content to load
         time.sleep(10)
         clear_alerts()
 
@@ -112,16 +118,15 @@ def check_appointments():
         if found_negative:
             print(f"Result: No appointments at {timestamp}")
         else:
-            print("🚨 Alert condition met!")
             driver.save_screenshot("screenshot.png")
-            alert_msg = f"🚨 *¡POSIBLE CITA!* 🚨\n\n**Time:** {timestamp}\nNo negative message found. Check the image!"
+            alert_msg = f"🚨 *¡POSIBLE CITA!* 🚨\n\n**Time:** {timestamp}\nNo negative message found. Check immediately!"
             send_telegram_photo(alert_msg)
 
     except Exception as e:
         driver.save_screenshot("screenshot.png")
-        error_msg = f"⚠️ *Bot Error* at {timestamp}\nDetails: `Page Timeout or Element Missing`"
+        error_msg = f"⚠️ *Bot Error* at {timestamp}\nDetails: `Page Timeout or Detection Block`"
         send_telegram_photo(error_msg)
-        print(f"Error: {e}")
+        print(f"Full error for logs: {e}")
     finally:
         driver.quit()
 
