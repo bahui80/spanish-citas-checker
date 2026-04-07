@@ -26,7 +26,7 @@ def send_telegram_msg(message):
     try:
         requests.post(url, json=payload)
     except Exception as e:
-        print(f"Error sending text: {e}")
+        print(f"Telegram Error: {e}")
 
 def send_telegram_photo(caption):
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -40,11 +40,11 @@ def send_telegram_photo(caption):
                 data = {"chat_id": chat_id, "caption": caption, "parse_mode": "Markdown"}
                 requests.post(url, files=files, data=data)
     except Exception as e:
-        print(f"Failed to send photo: {e}")
+        print(f"Photo Error: {e}")
 
 def check_appointments():
-    # Wait a random time
-    time.sleep(random.randint(5, 15))
+    # Jitter to avoid being flagged as a bot
+    time.sleep(random.randint(20, 60))
 
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
@@ -52,81 +52,93 @@ def check_appointments():
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
 
-    # STEALTH SETTINGS
+    # Stealth Settings
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36")
+    chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.{random.randint(10, 99)} Safari/537.36")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
 
-    # Execute CDP command to hide selenium
+    # Mask Selenium webdriver flag
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
-        "source": """
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => undefined
-            })
-        """
+        "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
 
-    wait = WebDriverWait(driver, 60) # Increased to 60s for slow government servers
+    wait = WebDriverWait(driver, 45)
     timestamp = datetime.now().strftime('%I:%M %p %Z')
 
-    def clear_alerts():
+    def handle_alert():
         try:
-            while True:
-                WebDriverWait(driver, 5).until(EC.alert_is_present())
-                alert = driver.switch_to.alert
-                print(f"Dismissed alert: {alert.text}")
-                alert.accept()
-                time.sleep(2)
+            WebDriverWait(driver, 8).until(EC.alert_is_present())
+            alert = driver.switch_to.alert
+            print(f"Alert cleared: {alert.text}")
+            alert.accept()
+            time.sleep(2)
         except:
             pass
 
     try:
-        print("🔗 Step 1: Opening Widget...")
-        driver.get("https://www.citaconsular.es/es/hosteds/widgetdefault/2d7c60f44f450863fb149b64fdd4b74a1/#services")
+        # STEP 1: LOAD LANDING PAGE
+        print("🔗 Step 1: Loading Consulate Landing Page...")
+        driver.get("https://www.exteriores.gob.es/Consulados/sanfrancisco/es/Comunicacion/Noticias/Paginas/Articulos/Ley-de-la-memoria-democr%C3%A1tica.aspx")
 
-        # Long initial sleep to let the heavy widget load
-        time.sleep(15)
-        clear_alerts()
+        # STEP 2: CLICK CITA PREVIA
+        print("Step 2: Clicking CITA PREVIA link...")
+        cita_link = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "CITA PREVIA")))
+        cita_link.click()
 
-        # Step 2: Handle entry button
-        print("Step 2: Looking for entry button...")
-        # If the spinner is still there, this will wait up to 60s
-        entry_btn = wait.until(EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Ok') or contains(., 'Aceptar') or contains(., 'Continuar')]")))
-        driver.execute_script("arguments[0].click();", entry_btn)
-        time.sleep(5)
+        # Switch to widget tab
+        time.sleep(4)
+        if len(driver.window_handles) > 1:
+            driver.switch_to.window(driver.window_handles[-1])
 
-        clear_alerts()
+        # STEP 3: HANDLE INITIAL POPUP
+        handle_alert()
 
-        # Step 3: Click 'Continue'
-        print("Step 3: Clicking 'Continue'...")
+        # STEP 4: CLICK GREEN CONTINUE BUTTON
+        print("Step 4: Clicking 'Continuar'...")
+        handle_alert()
         continue_xpath = "//button[contains(., 'Continuar') or contains(., 'Continue')]"
         continuar_button = wait.until(EC.element_to_be_clickable((By.XPATH, continue_xpath)))
         driver.execute_script("arguments[0].click();", continuar_button)
 
-        time.sleep(10)
-        clear_alerts()
+        # STEP 5: ANALYZE FINAL PAGE
+        print("Step 5: Analyzing results...")
+        time.sleep(15) # Essential for Bookitit to load the "No available" text
+        handle_alert() # Catch any final error alerts
 
-        # Step 4: Verify results
-        page_text = driver.page_source.lower()
-        negative_phrases = ["no hay horas", "no hay citas", "no hay fechas", "inténtelo de nuevo"]
+        page_text = driver.page_source
+        # Specific phrases from your screenshot
+        negative_phrases = [
+            "No hay horas disponibles",
+            "Inténtelo de nuevo dentro de unos días",
+            "No hay citas disponibles"
+        ]
 
         found_negative = any(phrase in page_text for phrase in negative_phrases)
 
         if found_negative:
-            print(f"Result: No appointments at {timestamp}")
+            # Result: Still empty. We print this to the GitHub log.
+            print(f"Result: No appointments available at {timestamp}.")
         else:
+            # CHANGE DETECTED: Take a photo and send the alert!
+            print("🚨 CHANGE DETECTED! Sending alert...")
             driver.save_screenshot("screenshot.png")
-            alert_msg = f"🚨 *¡POSIBLE CITA!* 🚨\n\n**Time:** {timestamp}\nNo negative message found. Check immediately!"
+            alert_msg = (
+                f"🚨 *¡CITA DISPONIBLE!* 🚨\n\n"
+                f"**Time:** {timestamp}\n"
+                f"The 'No hay horas' message is NO LONGER visible. Check the screenshot and book now!\n\n"
+                f"[Booking Link](https://www.citaconsular.es/es/hosteds/widgetdefault/2d7c60f44f450863fb149b64fdd4b74a1/#services)"
+            )
             send_telegram_photo(alert_msg)
 
     except Exception as e:
+        # Error handling with screenshot for debugging
         driver.save_screenshot("screenshot.png")
-        error_msg = f"⚠️ *Bot Error* at {timestamp}\nDetails: `Page Timeout or Detection Block`"
+        error_msg = f"⚠️ *Bot Error* at {timestamp}\nDetails: `Page Timeout or Structure Change`"
         send_telegram_photo(error_msg)
-        print(f"Full error for logs: {e}")
+        print(f"Detailed Error: {e}")
     finally:
         driver.quit()
 
