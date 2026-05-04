@@ -43,34 +43,37 @@ def send_telegram_photo(caption):
         print(f"Photo Error: {e}")
 
 def check_appointments():
-    # Jitter to look human
-    time.sleep(random.randint(20, 60))
+    # HIGH JITTER: Wait 1 to 5 minutes to avoid detection patterns
+    time.sleep(random.randint(60, 300))
 
     chrome_options = Options()
-    chrome_options.add_argument("--headless=new")
+    # Using 'headless=new' is essential for bypassing Cloudflare
+    chrome_options.add_argument("--headless=new") 
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920,1080")
-
-    # Stealth Settings
+    
+    # STEALTH: Disabling 'AutomationControlled' is the most important step
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
     chrome_options.add_experimental_option('useAutomationExtension', False)
-    chrome_options.add_argument(f"user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.{random.randint(10, 99)} Safari/537.36")
+    
+    # Updated User Agent to a very recent Chrome version
+    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36")
 
     driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=chrome_options)
-
-    # Mask Selenium
+    
+    # Final layer of masking the 'webdriver' flag
     driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
         "source": "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
     })
 
-    wait = WebDriverWait(driver, 45)
+    wait = WebDriverWait(driver, 60)
     timestamp = datetime.now().strftime('%I:%M %p %Z')
 
     def handle_alert():
         try:
-            WebDriverWait(driver, 8).until(EC.alert_is_present())
+            WebDriverWait(driver, 10).until(EC.alert_is_present())
             alert = driver.switch_to.alert
             alert.accept()
             time.sleep(2)
@@ -78,68 +81,59 @@ def check_appointments():
             pass
 
     try:
-        # STEP 1: LOAD LANDING PAGE
-        print("🔗 Step 1: Loading Consulate Landing Page...")
+        print("🔗 Step 1: Loading Consulate Page...")
         driver.get("https://www.exteriores.gob.es/Consulados/sanfrancisco/es/Comunicacion/Noticias/Paginas/Articulos/Ley-de-la-memoria-democr%C3%A1tica.aspx")
+        
+        # Check if we are immediately blocked by Cloudflare on the main site
+        if "Verify you are human" in driver.page_source or "Cloudflare" in driver.page_source:
+            print("Cloudflare detected on landing page. Waiting for potential auto-pass...")
+            time.sleep(20)
 
-        # STEP 2: CLICK CITA PREVIA
         print("Step 2: Clicking CITA PREVIA link...")
         cita_link = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "CITA PREVIA")))
         cita_link.click()
-
-        time.sleep(4)
+        
+        time.sleep(5)
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
-        # STEP 3: HANDLE INITIAL POPUP
+        # HANDLE CLOUDFLARE ON WIDGET
+        if "Verify you are human" in driver.page_source:
+            print("Cloudflare detected on widget. Waiting...")
+            time.sleep(25) # Give the 'Turnstile' a chance to resolve automatically
+
         handle_alert()
 
-        # STEP 4: CLICK GREEN CONTINUE BUTTON
+        # Step 4: Click 'Continuar'
         print("Step 4: Clicking 'Continuar'...")
         handle_alert()
         continue_xpath = "//button[contains(., 'Continuar') or contains(., 'Continue')]"
         continuar_button = wait.until(EC.element_to_be_clickable((By.XPATH, continue_xpath)))
         driver.execute_script("arguments[0].click();", continuar_button)
 
-        # STEP 5: ANALYZE FINAL PAGE
+        # Step 5: Analyze final results
         print("Step 5: Analyzing results...")
-        time.sleep(15)
+        time.sleep(20) # Extended wait for Bookitit after security checks
         handle_alert()
 
         page_text = driver.page_source
-        negative_phrases = [
-            "No hay horas disponibles",
-            "Inténtelo de nuevo dentro de unos días",
-            "No hay citas disponibles"
-        ]
-
+        negative_phrases = ["No hay horas disponibles", "Inténtelo de nuevo dentro de unos días"]
         found_negative = any(phrase in page_text for phrase in negative_phrases)
 
         if found_negative:
-            # HEARTBEAT MESSAGE (No appointments)
             print(f"Result: No appointments available at {timestamp}.")
-            heartbeat_msg = (
-                f"✅ *Bot Check: Online*\n"
-                f"**Time:** {timestamp}\n"
-                f"**Status:** No hay horas disponibles. (Still checking...)"
-            )
-            send_telegram_msg(heartbeat_msg)
+            send_telegram_msg(f"✅ *Bot Check: Online*\n**Time:** {timestamp}\n**Status:** No slots found.")
         else:
-            # SUCCESS ALERT (Change detected)
-            print("🚨 CHANGE DETECTED! Sending alert...")
+            print("🚨 Potential Match found!")
             driver.save_screenshot("screenshot.png")
-            alert_msg = (
-                f"🚨 *¡CITA DISPONIBLE!* 🚨\n\n"
-                f"**Time:** {timestamp}\n"
-                f"The 'No hay horas' message is NO LONGER visible. Check immediately!\n\n"
-                f"[Booking Link](https://www.citaconsular.es/es/hosteds/widgetdefault/2d7c60f44f450863fb149b64fdd4b74a1/#services)"
-            )
+            alert_msg = f"🚨 *¡POSIBLE CITA!* 🚨\n\n**Time:** {timestamp}\nSecurity check passed. Review the screenshot!"
             send_telegram_photo(alert_msg)
 
     except Exception as e:
         driver.save_screenshot("screenshot.png")
-        error_msg = f"⚠️ *Bot Error* at {timestamp}\nStatus: `Check logs or screenshot`"
-        send_telegram_photo(error_msg)
+        # Check if the screenshot shows we are still stuck on Cloudflare
+        error_context = "Cloudflare Block" if "Verify you are human" in driver.page_source else "Timeout/Element Error"
+        send_telegram_photo(f"⚠️ *Bot Error* at {timestamp}\nStatus: `{error_context}`")
         print(f"Detailed Error: {e}")
     finally:
         driver.quit()
