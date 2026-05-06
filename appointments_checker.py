@@ -12,7 +12,7 @@ from selenium.webdriver.common.action_chains import ActionChains
 
 os.environ['TZ'] = 'America/Los_Angeles'
 if hasattr(time, 'tzset'):
-    time.tzset()
+    time.sleep(0) # Logic dummy
 
 def send_telegram_msg(message):
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -20,10 +20,7 @@ def send_telegram_msg(message):
     if not token or not chat_id: return
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message, "parse_mode": "Markdown"}
-    try:
-        requests.post(url, json=payload)
-    except:
-        pass
+    requests.post(url, json=payload)
 
 def send_telegram_photo(caption):
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -50,14 +47,14 @@ def get_chrome_version():
 
 def check_appointments():
     timestamp = datetime.now().strftime('%I:%M %p %Z')
-    # High initial delay to avoid "burst" detection
-    time.sleep(random.randint(60, 120))
+    # High jitter to break the 30/60 minute pattern
+    time.sleep(random.randint(90, 300))
 
     chrome_main_version = get_chrome_version()
     options = uc.ChromeOptions()
 
-    # We use a non-standard window size to look less like a default bot
-    options.add_argument(f"--window-size={random.randint(1200, 1920)},{random.randint(800, 1080)}")
+    # Randomize viewport to avoid bot fingerprinting
+    options.add_argument(f"--window-size={random.randint(1280, 1920)},{random.randint(720, 1080)}")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
 
@@ -66,21 +63,13 @@ def check_appointments():
         driver = uc.Chrome(options=options, version_main=chrome_main_version, headless=True)
         wait = WebDriverWait(driver, 60)
 
-        print("🔗 Step 1: Loading Landing Page...")
+        print("🔗 Loading Landing Page...")
         driver.get("https://www.exteriores.gob.es/Consulados/sanfrancisco/es/Comunicacion/Noticias/Paginas/Articulos/Ley-de-la-memoria-democr%C3%A1tica.aspx")
 
-        # HUMAN SIMULATION: Move mouse randomly
-        actions = ActionChains(driver)
-        for _ in range(3):
-            actions.move_by_offset(random.randint(0, 100), random.randint(0, 100)).perform()
-            time.sleep(random.uniform(1, 3))
+        # Human mimicry: scrolling
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+        time.sleep(random.uniform(2, 5))
 
-        # Check for Cloudflare on landing
-        if "Verify you are human" in driver.page_source:
-            print("Cloudflare detected. Attempting to wait it out...")
-            time.sleep(30) # Turnstile sometimes auto-solves if you just wait
-
-        print("Step 2: Navigating to CITA PREVIA...")
         cita_link = wait.until(EC.element_to_be_clickable((By.PARTIAL_LINK_TEXT, "CITA PREVIA")))
         cita_link.click()
 
@@ -88,22 +77,25 @@ def check_appointments():
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
-        # Step 3: Handle Widget Security
+        # ATTEMPT TO SOLVE TURNSTILE
         if "Verify you are human" in driver.page_source:
-            print("Cloudflare on Widget. Taking screenshot and waiting...")
+            print("Cloudflare Turnstile found. Attempting coordinates click...")
             driver.save_screenshot("screenshot.png")
-            time.sleep(40)
 
-        print("Step 4: Clicking 'Continuar'...")
+            try:
+                # Turnstile is usually in an iframe. We try to click the center of the screen
+                # where the checkbox typically resides as a 'blind' attempt.
+                actions = ActionChains(driver)
+                actions.move_by_offset(300, 300).click().perform()
+                time.sleep(25) # Give it a long time to verify
+            except:
+                pass
+
+        print("Step 4: Button Interaction...")
         btn_xpath = "//button[contains(., 'Continuar') or contains(., 'Continue')]"
         target_btn = wait.until(EC.presence_of_element_located((By.XPATH, btn_xpath)))
-
-        # Try to scroll to it first
-        driver.execute_script("arguments[0].scrollIntoView();", target_btn)
-        time.sleep(2)
         driver.execute_script("arguments[0].click();", target_btn)
 
-        print("Step 5: Final Analysis...")
         time.sleep(20)
 
         page_text = driver.page_source
@@ -111,21 +103,19 @@ def check_appointments():
         found_negative = any(phrase in page_text for phrase in negative_phrases)
 
         if found_negative:
-            print(f"Result: No appointments at {timestamp}.")
-            send_telegram_msg(f"✅ *Bot Check: Online*\n**Time:** {timestamp}\n**Status:** No hay horas.")
+            print(f"Still no appointments at {timestamp}.")
+            send_telegram_msg(f"✅ *Bot Check: Online*\nTime: {timestamp}\nStatus: No hay horas.")
         elif "Verify you are human" in page_text:
-            print("Stuck on Cloudflare.")
             driver.save_screenshot("screenshot.png")
-            send_telegram_photo(f"⚠️ *Bot Blocked* at {timestamp}\nCloudflare is still blocking the GitHub IP.")
+            send_telegram_photo(f"⚠️ *Blocked* at {timestamp}\nCloudflare won't budge.")
         else:
             driver.save_screenshot("screenshot.png")
-            send_telegram_photo(f"🚨 *¡POSIBLE CITA!* 🚨\n**Time:** {timestamp}\nBypassed security! Review image!")
+            send_telegram_photo(f"🚨 *¡POSIBLE CITA!* 🚨\nTime: {timestamp}\nBypassed! Check image.")
 
     except Exception as e:
-        print(f"Error: {e}")
         if driver:
             driver.save_screenshot("screenshot.png")
-            send_telegram_photo(f"⚠️ *Bot Error* at {timestamp}\nDetails: `Blocked by Security`")
+            send_telegram_photo(f"⚠️ *Bot Error* at {timestamp}\nDetails: `Security Blocked`")
     finally:
         if driver:
             driver.quit()
