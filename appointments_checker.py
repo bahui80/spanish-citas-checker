@@ -2,8 +2,9 @@ import os
 import time
 import requests
 import random
+import re
 from datetime import datetime
-import undetected_chromedriver as uc # Specialized for Cloudflare
+import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -36,30 +37,41 @@ def send_telegram_photo(caption):
                 files = {"photo": photo}
                 data = {"chat_id": chat_id, "caption": caption, "parse_mode": "Markdown"}
                 requests.post(url, files=files, data=data)
+        else:
+            send_telegram_msg(caption) # Fallback to text if no photo
     except Exception as e:
         print(f"Photo Error: {e}")
 
+def get_chrome_version():
+    """Helper to find the installed Chrome version on the runner."""
+    try:
+        version = os.popen('google-chrome --version').read()
+        return int(re.search(r'Chrome (\d+)', version).group(1))
+    except:
+        return None
+
 def check_appointments():
-    # High Jitter to stay under the radar
-    time.sleep(random.randint(60, 180))
+    # Move timestamp to the top so it's available for error reporting
+    timestamp = datetime.now().strftime('%I:%M %p %Z')
+
+    # Random jitter
+    time.sleep(random.randint(30, 60))
 
     options = uc.ChromeOptions()
-    options.add_argument("--headless") # uc works best with standard headless
+    options.add_argument("--headless")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1920,1080")
 
-    # Randomize User Agent slightly
-    user_agents = [
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-    ]
-    options.add_argument(f"user-agent={random.choice(user_agents)}")
+    # Detect the correct version to prevent the 'SessionNotCreated' error
+    chrome_main_version = get_chrome_version()
+    print(f"Detected Chrome version: {chrome_main_version}")
 
+    driver = None
     try:
-        driver = uc.Chrome(options=options, headless=True)
+        # Initialize with the specific version found on the system
+        driver = uc.Chrome(options=options, version_main=chrome_main_version)
         wait = WebDriverWait(driver, 50)
-        timestamp = datetime.now().strftime('%I:%M %p %Z')
 
         print("🔗 Step 1: Loading Consulate Page...")
         driver.get("https://www.exteriores.gob.es/Consulados/sanfrancisco/es/Comunicacion/Noticias/Paginas/Articulos/Ley-de-la-memoria-democr%C3%A1tica.aspx")
@@ -72,21 +84,17 @@ def check_appointments():
         if len(driver.window_handles) > 1:
             driver.switch_to.window(driver.window_handles[-1])
 
-        # CLOUDFLARE BYPASS SLEEP
-        # undetected-chromedriver often solves Turnstile automatically if given time
+        # Cloudflare Bypass Wait
         if "Verify you are human" in driver.page_source:
-            print("Cloudflare Turnstile detected. Waiting for auto-resolve...")
+            print("Cloudflare Turnstile detected. Waiting...")
             time.sleep(20)
 
-        print("Step 4: Clicking 'Continuar'...")
+        print("Step 3: Handling Widget Buttons...")
         btn_xpath = "//button[contains(., 'Continuar') or contains(., 'Continue')]"
         target_btn = wait.until(EC.presence_of_element_located((By.XPATH, btn_xpath)))
-
-        # Click via JS
         driver.execute_script("arguments[0].click();", target_btn)
 
-        # EXTENDED WAIT for the final page
-        print("Step 5: Final analysis...")
+        print("Step 4: Final Analysis...")
         time.sleep(20)
 
         page_text = driver.page_source
@@ -96,20 +104,20 @@ def check_appointments():
         if found_negative:
             print(f"Result: Still no appointments at {timestamp}.")
             send_telegram_msg(f"✅ *Bot Check: Online*\n**Time:** {timestamp}\n**Status:** No hay horas.")
-        elif "Verify you are human" in page_text:
-            driver.save_screenshot("screenshot.png")
-            send_telegram_photo(f"⚠️ *Bot Blocked* at {timestamp}\nCloudflare reappeared.")
         else:
             driver.save_screenshot("screenshot.png")
-            send_telegram_photo(f"🚨 *¡POSIBLE CITA!* 🚨\n**Time:** {timestamp}\nBypassed Cloudflare. Check image!")
+            send_telegram_photo(f"🚨 *¡POSIBLE CITA!* 🚨\n**Time:** {timestamp}\nReview the image!")
 
     except Exception as e:
-        if 'driver' in locals():
-            driver.save_screenshot("screenshot.png")
-        send_telegram_photo(f"⚠️ *Bot Error* at {timestamp}\nDetails: `Automation Blocked`")
-        print(f"Error: {e}")
+        print(f"Error occurred: {e}")
+        if driver:
+            try:
+                driver.save_screenshot("screenshot.png")
+                send_telegram_photo(f"⚠️ *Bot Error* at {timestamp}\nDetails: `{str(e)[:100]}`")
+            except:
+                send_telegram_msg(f"⚠️ *Bot Error* at {timestamp}\nDetails: `Crash during driver setup`")
     finally:
-        if 'driver' in locals():
+        if driver:
             driver.quit()
 
 if __name__ == "__main__":
