@@ -1,8 +1,8 @@
 name: Consulate Appointment Checker
 
 on:
-  schedule:
-    - cron: '0 * * * *'
+  # schedule:
+    # - cron: '0 * * * *'
   workflow_dispatch: # This allows you to run it manually to test it
 
 jobs:
